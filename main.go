@@ -5,13 +5,10 @@ import (
   "log"
   "fmt"
   "time"
-  //"strings"
   "runtime"
 
   "net/http"
   "math/rand"
-  //"encoding/json"
-  //"crypto/tls"
 
   "github.com/gobwas/ws"
   "github.com/gobwas/ws/wsutil"
@@ -51,29 +48,7 @@ func main() {
       // otherwise just recreate
       log.Println("reqConnId", reqConnId)
     }
-    //log.Println("access_token", token)
 
-    //var s: = "hasStream_"+token
-    /*
-    var str string
-    str += "hasStream_"
-    str += token
-    fmt.Println(str)
-    //var sb strings.Builder
-    //sb.WriteString("hasStream_")
-    //sb.WriteString(token)
-    //fmt.Println(sb.String())
-
-    val, err := client.Get(str).Result()
-    if err == redis.Nil {
-        log.Println("no streams for this token")
-        http.NotFound(w, r)
-        return
-    } else if err != nil {
-        panic(err)
-    }
-    fmt.Println(val)
-    */
     var connectionId = RandStringRunes(64)
     // now connectionId is sorted
 
@@ -105,7 +80,6 @@ func main() {
     if err != nil {
       // handle error
     }
-    //log.Println("Upgrade")
 
     pubsub := redisClient.Subscribe(connectionId)
     // Wait for subscription to be created before publishing message.
@@ -114,6 +88,7 @@ func main() {
         panic(err)
     }
     fmt.Println(subscr)
+
 
     // one thread to pump redis
     go func() {
@@ -129,13 +104,12 @@ func main() {
         if err != nil {
           // handle error
           log.Println("write message err", err)
-          //if (err == tls.errClosed) {
           pubsub.Close()
           break
-          //}
         }
       }
     }()
+
     // another thread to listen to socket and handle closing the socket
     go func() {
       defer conn.Close()
@@ -187,12 +161,6 @@ func main() {
           } else {
             _, err = io.ReadFull(reader, buff[0:header.Length])
             if err == nil {
-              /*
-              err = t.gotWSFrame(conn, header, buff[0:header.Length])
-              if err != nil {
-                log.Warnf("bad frame from %s: %s", conn.C.RemoteAddr(), err.Error())
-              }
-              */
               s := string(buff[:header.Length])
               if header.OpCode.IsData() {
                 log.Println("data frame", s)
@@ -207,30 +175,7 @@ func main() {
 
         // Reset writer to write frame with right operation code.
         writer.Reset(conn, state, header.OpCode)
-
-        /*
-        if _, err = io.Copy(writer, reader); err != nil {
-          // handle error
-        }
-
-        if err = writer.Flush(); err != nil {
-          // handle error
-        }
-        */
       }
     }()
   }))
 }
-
-/*
-        w := wsutil.NewWriter(conn, ws.StateServerSide, ws.OpText)
-        encoder := json.NewEncoder(w)
-
-        if err := encoder.Encode("p"); err != nil {
-          //return err
-          // handle error
-        }
-
-        w.Flush()
-
-*/
