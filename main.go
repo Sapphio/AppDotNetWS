@@ -6,9 +6,11 @@ import (
   "fmt"
   "time"
   "runtime"
+  "strconv"
 
   "net/http"
   "math/rand"
+  "encoding/json"
 
   "github.com/gobwas/ws"
   "github.com/gobwas/ws/wsutil"
@@ -26,6 +28,22 @@ func RandStringRunes(n int) string {
   return string(b)
 }
 
+type ADNMetaRespone struct {
+  Type string `json:"type"`
+  Connection_id string `json:"connection_id"`
+}
+type ADNPingDataRespone struct {
+  Id uint64 `json:"id"`
+}
+type ADNRepsonse struct {
+  Meta ADNMetaRespone `json:"meta"`
+  //Data string `json:"data"`
+}
+type ADNPingRepsonse struct {
+  Meta ADNMetaRespone `json:"meta"`
+  Data ADNPingDataRespone `json:"data"`
+}
+
 func main() {
   rand.Seed(time.Now().UnixNano())
   redisClient := redis.NewClient(&redis.Options{
@@ -36,7 +54,7 @@ func main() {
   pong, err := redisClient.Ping().Result()
   fmt.Println(pong, err)
 
-  log.Println("Something v 0.1 TLS server starting on port 8000")
+  log.Println("AppDotNetWS v 0.2 TLS server starting on port 8000")
   http.ListenAndServeTLS(":8000", "/root/.acme.sh/api.sapphire.moe/fullchain.cer", "/root/.acme.sh/api.sapphire.moe/api.sapphire.moe.key", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
     log.Println("Request", r.RemoteAddr)
 
@@ -71,6 +89,7 @@ func main() {
         panic(rErr)
     }
 
+    // javascript can't read websocket headers
     header := http.Header{
       "X-Go-Version": []string{runtime.Version()},
       "Connection-Id": []string{connectionId},
@@ -89,7 +108,6 @@ func main() {
     }
     fmt.Println(subscr)
 
-
     // one thread to pump redis
     go func() {
       defer pubsub.Close()
@@ -100,11 +118,33 @@ func main() {
         }
 
         fmt.Println(msg.Channel, msg.Payload)
+        //var dat map[string]interface{}
+        var dat ADNRepsonse
+        if err := json.Unmarshal([]byte(msg.Payload), &dat); err != nil {
+          fmt.Println("Couldnt Unmarshal Payload into ADNRepsonse")
+        }
+        fmt.Println("MetaType", dat)
+        if (dat.Meta.Type == "ping") {
+          var res ADNPingRepsonse
+          if err := json.Unmarshal([]byte(msg.Payload), &res); err != nil {
+            fmt.Println("Couldnt Unmarshal Payload into ADNPingRepsonse", err)
+            continue // we just wont pong
+          }
+          fmt.Println("pong!")
+          redisClient.Publish("AppDotNetWS", "pong_"+connectionId+"_"+strconv.FormatUint(res.Data.Id, 10))
+          continue
+        }
+        // demarshall
         err = wsutil.WriteServerMessage(conn, ws.OpText, []byte(msg.Payload))
         if err != nil {
           // handle error
-          log.Println("write message err", err)
+          log.Println("redis write message err", err)
+
+          redisClient.Del(connTokenKey)
+          redisClient.Publish("AppDotNetWS", "disconnect_"+connectionId)
           pubsub.Close()
+          // we need to kill the websocket too tbh
+          conn.Close()
           break
         }
       }
@@ -120,6 +160,7 @@ func main() {
         reader = wsutil.NewReader(conn, state)
         writer = wsutil.NewWriter(conn, state, ws.OpText)
       )
+      // javascript can't read websocket headers
       // The user stream endpoint will return the negotiated connection_id in HTTP headers (https)
       // or initial message (websocket).
       // send initial JSON
@@ -133,7 +174,7 @@ func main() {
       err = wsutil.WriteServerMessage(conn, ws.OpText, msg)
       if err != nil {
         // handle error
-        log.Println("write message err", err)
+        log.Println("conn write message err", err)
       }
       for {
         header, err := reader.NextFrame()
@@ -142,9 +183,9 @@ func main() {
           log.Println("frame err", err)
         }
         if header.OpCode == ws.OpClose {
-          log.Println("closing connection", conn.RemoteAddr())
+          log.Println("opclose closing connection", conn.RemoteAddr())
           redisClient.Del(connTokenKey)
-          redisClient.Publish(connectionId, "disconnect")
+          redisClient.Publish("AppDotNetWS", "disconnect_"+connectionId)
           conn.Close()
           break
         }
@@ -169,6 +210,10 @@ func main() {
           }
         }
         if err != nil {
+          log.Println("err is closing connection", conn.RemoteAddr())
+          redisClient.Del(connTokenKey)
+          redisClient.Publish("AppDotNetWS", "disconnect_"+connectionId)
+          //redisClient.Publish(connectionId, "disconnect")
           conn.Close()
           break
         }
